@@ -1,0 +1,23 @@
+# Ubicación: .github/workflows/add-to-project.yml
+# Repos donde colocarlo: CentralTickets (Issues padre) y cada repo de Squad que abra sub-issues
+# (ej. SquadCredicorpData).
+#
+# ⚠️ Este Project es de una cuenta PERSONAL (github.com/users/oficom3/...), no de una
+# organización. Por eso PROJECT_TOKEN debe crearse como secret en CADA repo (Settings → Secrets
+# and variables → Actions → New repository secret), no como secret de organización.
+
+name: Agregar a Project Data Release
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  add-to-project:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Agregar Issue al Project
+        uses: actions/add-to-project@v1
+        with:
+          project-url: https://github.com/users/oficom3/projects/5
+          github-token: ${{ secrets.PROJECT_TOKEN }}
