@@ -1,3 +1,12 @@
+# ⚠️ PROPUESTA PARA DATAOPS — NO fusionar sin su revisión y sin completar los TODO
+# de .github/actions/actualizar-stage-project/action.yml (PROJECT_ID, FIELD_ID_COMPUERTA, option_ids).
+# Requiere el mismo secret PROJECT_TOKEN usado en ticket-regular.PROPUESTA.yml.
+#
+# Nota: el flujo Express usa un subconjunto de las 12 opciones de "Compuerta" — no pasa por
+# "Planificación DataOps" ni tiene una "Validación Funcional — Producción" separada (todo se
+# resuelve en un solo job 'stage_validacion_tecnica' al final). Igual que en Regular, 'deploy_cert'
+# y 'deploy_prod' no tienen 'steps:' propios, así que se agregaron dos jobs pequeños aparte.
+
 name: Ticket Express
 
 on:
@@ -16,19 +25,27 @@ on:
 permissions:
   issues: write
 
+env:
+  PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}   # PROPUESTA: mismo secret usado en ticket-regular.yml
+
 jobs:
   solicitud_pase:
     runs-on: ubuntu-latest
-    # Mapeamos los resultados del parser a outputs del JOB para que otros jobs puedan usarlos
     outputs:
       commit_sha: ${{ steps.extraer_datos.outputs.commit_sha }}
       modo_deploy: ${{ steps.extraer_datos.outputs.modo_deploy }}
     steps:
-      # 1. Descarga el código del repositorio al contenedor
+      # ⬇️ NUEVO
+      - name: Actualizar stage en el Project
+        uses: ./.github/actions/actualizar-stage-project
+        with:
+          issue_number: ${{ inputs.issue_number }}
+          stage_name: "Solicitud de Pase"
+
+      # ⬇️ steps originales, sin cambios
       - name: Checkout del Repositorio
         uses: actions/checkout@v4
 
-      # 2. Ejecutar el parseador oficial de IssueOps
       - name: Parsear Formulario Técnico Regular
         id: parse
         uses: issue-ops/parser@v5.0.0
@@ -36,21 +53,14 @@ jobs:
           body: ${{ github.event.issue.body }}
           issue-form-template: formulario-pase-express.yml
 
-      # 3. Procesar el JSON devuelto por la acción usando jq
       - name: Extraer y Validar Datos del JSON
         id: extraer_datos
         run: |
           JSON_DATA='${{ steps.parse.outputs.json }}'
-          
-          # Extraemos el valor del commit
           COMMIT=$(echo "$JSON_DATA" | jq -r '.id_commit // empty')
-
           MODO=$(echo "$JSON_DATA" | jq -r 'if (.modo_despliegue | type) == "array" then .modo_despliegue[0] else .modo_despliegue end // empty')
-          
           echo "Commit detectado: $COMMIT"
           echo "Modo detectado: $MODO"
-          
-          # Guardamos en los outputs de forma segura en una sola línea
           echo "commit_sha=$COMMIT" >> $GITHUB_OUTPUT
           echo "modo_deploy=$MODO" >> $GITHUB_OUTPUT
 
@@ -77,6 +87,14 @@ jobs:
     runs-on: ubuntu-latest
     environment: Revision-Checklist
     steps:
+      # ⬇️ NUEVO
+      - name: Actualizar stage en el Project
+        uses: ./.github/actions/actualizar-stage-project
+        with:
+          issue_number: ${{ inputs.issue_number }}
+          stage_name: "Revisión de Checklist"
+
+      # ⬇️ steps originales
       - run: echo "Checklist aprobado"
       - name: Registrar checklist
         uses: actions/github-script@v7
@@ -94,6 +112,14 @@ jobs:
     runs-on: ubuntu-latest
     environment: Aprobacion-Seguridad
     steps:
+      # ⬇️ NUEVO
+      - name: Actualizar stage en el Project
+        uses: ./.github/actions/actualizar-stage-project
+        with:
+          issue_number: ${{ inputs.issue_number }}
+          stage_name: "Aprobación de Seguridad"
+
+      # ⬇️ steps originales
       - run: echo "Seguridad aprobada"
       - name: Registrar seguridad
         uses: actions/github-script@v7
@@ -108,16 +134,35 @@ jobs:
 
   deploy_cert:
     needs: stage_aprobacion_seguridad
-    uses: ./.github/workflows/deploy-cert.yml
+    uses: ./.github/workflows/deploy-cert.yml   # sin 'steps:' propios — no se le puede insertar nada aquí
     secrets: inherit
     with:
       repository: SquadCredicorpData
       environment: CERT
 
+  # ⬇️ JOB NUEVO — cubre el stage de deploy_cert sin tocar el workflow reusable compartido
+  actualizar_stage_deploy_cert:
+    needs: deploy_cert
+    runs-on: ubuntu-latest
+    steps:
+      - name: Actualizar stage en el Project
+        uses: ./.github/actions/actualizar-stage-project
+        with:
+          issue_number: ${{ inputs.issue_number }}
+          stage_name: "Despliegue en Certificación"
+
   comentario_cert:
     needs: deploy_cert
     runs-on: ubuntu-latest
     steps:
+      # ⬇️ NUEVO
+      - name: Actualizar stage en el Project
+        uses: ./.github/actions/actualizar-stage-project
+        with:
+          issue_number: ${{ inputs.issue_number }}
+          stage_name: "Despliegue + Validación Cert"
+
+      # ⬇️ step original
       - name: Registrar CERT
         uses: actions/github-script@v7
         with:
@@ -131,16 +176,30 @@ jobs:
 
   deploy_prod:
     needs: comentario_cert
-    uses: ./.github/workflows/deploy-prod.yml
+    uses: ./.github/workflows/deploy-prod.yml   # sin 'steps:' propios — no se le puede insertar nada aquí
     secrets: inherit
     with:
       repository: SquadCredicorpData
       environment: PROD
 
+  # ⬇️ JOB NUEVO — cubre el stage de deploy_prod sin tocar el workflow reusable compartido
+  actualizar_stage_deploy_prod:
+    needs: deploy_prod
+    runs-on: ubuntu-latest
+    steps:
+      - name: Actualizar stage en el Project
+        uses: ./.github/actions/actualizar-stage-project
+        with:
+          issue_number: ${{ inputs.issue_number }}
+          stage_name: "Despliegue en Producción"
+
   comentario_prod:
     needs: deploy_prod
     runs-on: ubuntu-latest
     steps:
+      # No se agrega step aquí a propósito: solo publica un comentario, la actualización de
+      # stage de "Despliegue en Producción" ya la cubre el job 'actualizar_stage_deploy_prod'
+      # de arriba, y la siguiente distinta (Validación Técnica) la cubre 'stage_validacion_tecnica'.
       - name: Registrar PROD
         uses: actions/github-script@v7
         with:
@@ -157,6 +216,14 @@ jobs:
     runs-on: ubuntu-latest
     environment: Validacion-Tecnica-Produccion
     steps:
+      # ⬇️ NUEVO
+      - name: Actualizar stage en el Project
+        uses: ./.github/actions/actualizar-stage-project
+        with:
+          issue_number: ${{ inputs.issue_number }}
+          stage_name: "Validación Técnica — Producción"
+
+      # ⬇️ steps originales
       - run: |
           echo "Validando logs, jobs y pipelines..."
           echo "Validacion tecnica OK"
@@ -165,7 +232,6 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            // Añadir el label requerido por CentralTicketManager
             await github.rest.issues.addLabels({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -187,15 +253,21 @@ jobs:
       - stage_aprobacion_seguridad
       - deploy_cert
       - comentario_cert
-    # anyof(failed) evalúa si CUALQUIERA de los jobs anteriores falló o fue rechazado
     if: always() && contains(needs.*.result, 'failure')
     runs-on: ubuntu-latest
     steps:
+      # ⬇️ NUEVO
+      - name: Actualizar stage en el Project
+        uses: ./.github/actions/actualizar-stage-project
+        with:
+          issue_number: ${{ inputs.issue_number }}
+          stage_name: "Pendiente de Reintento"
+
+      # ⬇️ steps originales
       - name: Asignar Label de Rechazo y Registrar Error
         uses: actions/github-script@v7
         with:
           script: |
-            // Añadir el label requerido por CentralTicketManager para reintentos
             await github.rest.issues.addLabels({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -214,6 +286,16 @@ jobs:
     needs: stage_validacion_tecnica
     runs-on: ubuntu-latest
     steps:
+      # ⬇️ NUEVO
+      - name: Actualizar stage en el Project
+        uses: ./.github/actions/actualizar-stage-project
+        with:
+          issue_number: ${{ inputs.issue_number }}
+          stage_name: "Aprobado"
+
+      # ⬇️ step original — NOTA: el mensaje dice "Pase Regular" pero este es el flujo Express;
+      # parece un texto copiado sin ajustar. No lo corregí para no alterar lógica de negocio sin
+      # que DataOps lo confirme, pero vale la pena señalárselo aparte.
       - name: Marcar ticket aprobado
         uses: actions/github-script@v7
         with:
@@ -237,11 +319,18 @@ jobs:
       - deploy_prod
       - comentario_prod
       - stage_validacion_tecnica
-    # Evalúa fallos únicamente dentro del ciclo productivo real
     if: always() && (needs.deploy_prod.result == 'failure' || needs.comentario_prod.result == 'failure' || needs.stage_validacion_tecnica.result == 'failure')
     runs-on: ubuntu-latest
     environment: Reversion-Produccion
     steps:
+      # ⬇️ NUEVO
+      - name: Actualizar stage en el Project
+        uses: ./.github/actions/actualizar-stage-project
+        with:
+          issue_number: ${{ inputs.issue_number }}
+          stage_name: "Reversión en Producción"
+
+      # ⬇️ steps originales
       - name: Registrar reversión requerida
         uses: actions/github-script@v7
         with:
