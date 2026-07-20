@@ -1,0 +1,416 @@
+# ⚠️ PROPUESTA PARA DATAOPS — NO fusionar sin su revisión y sin completar los TODO
+# de .github/actions/actualizar-stage-project/action.yml (PROJECT_ID, FIELD_ID_COMPUERTA, option_ids).
+# Requiere además el secret PROJECT_TOKEN (org-level, con permiso de escritura en Projects v2).
+#
+# Cambios frente al original: se agregó, en cada job con 'steps:' propios, un primer step que
+# llama a la acción reutilizable 'actualizar-stage-project' para mover el ticket de carril en el
+# tablero. Los jobs 'deploy_cert' y 'deploy_prod' no tienen 'steps:' (solo 'uses:'), así que se
+# agregaron DOS jobs nuevos y pequeños ('actualizar_stage_deploy_cert' / '..._deploy_prod') que
+# corren en paralelo a esos despliegues, en vez de modificar el workflow reusable compartido.
+
+name: Ticket Regular
+
+on:
+  workflow_call:
+    inputs:
+      issue_number:
+        required: true
+        type: string
+      issue_title:
+        required: true
+        type: string
+      issue_author:
+        required: true
+        type: string
+
+permissions:
+  issues: write
+
+env:
+  PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}   # PROPUESTA: secret nuevo, a nivel de organización
+
+jobs:
+  solicitud_pase:
+    runs-on: ubuntu-latest
+    outputs:
+      commit_sha: ${{ steps.extraer_datos.outputs.commit_sha }}
+      modo_deploy: ${{ steps.extraer_datos.outputs.modo_deploy }}
+    steps:
+      # ⬇️ NUEVO (checkout agregado — la acción local lo requiere)
+      - name: Checkout del Repositorio
+        uses: actions/checkout@v4
+
+      - name: Actualizar stage en el Project
+        uses: ./.github/actions/actualizar-stage-project
+        with:
+          issue_number: ${{ inputs.issue_number }}
+          stage_name: "Solicitud de Pase"
+
+      # ⬇️ steps originales, sin cambios
+      - name: Parsear Formulario Técnico Regular
+        id: parse
+        uses: issue-ops/parser@v5.0.0
+        with:
+          body: ${{ github.event.issue.body }}
+          issue-form-template: formulario-pase-regular.yml
+
+      - name: Extraer y Validar Datos del JSON
+        id: extraer_datos
+        run: |
+          JSON_DATA='${{ steps.parse.outputs.json }}'
+          COMMIT=$(echo "$JSON_DATA" | jq -r '.id_commit // empty')
+          MODO=$(echo "$JSON_DATA" | jq -r 'if (.modo_despliegue | type) == "array" then .modo_despliegue[0] else .modo_despliegue end // empty')
+          echo "Commit detectado: $COMMIT"
+          echo "Modo detectado: $MODO"
+          echo "commit_sha=$COMMIT" >> $GITHUB_OUTPUT
+          echo "modo_deploy=$MODO" >> $GITHUB_OUTPUT
+
+      - name: Inicializar solicitud
+        run: |
+          echo "Issue Regular recibida"
+          echo "Numero: ${{ inputs.issue_number }}"
+          echo "Titulo: ${{ inputs.issue_title }}"
+          echo "Solicitante: ${{ inputs.issue_author }}"
+
+      - name: Registrar inicio
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number('${{ inputs.issue_number }}'),
+              body: '✅ Solicitud de pase recibida.\n\n**Detalles Técnicos Detectados:**\n- **Commit:** `${{ steps.extraer_datos.outputs.commit_sha }}`\n- **Modo:** `${{ steps.extraer_datos.outputs.modo_deploy }}`\n\nInicio del flujo Regular.'
+            })
+
+  stage_revision_checklist:
+    needs: solicitud_pase
+    runs-on: ubuntu-latest
+    environment: Revision-Checklist
+    steps:
+      # ⬇️ NUEVO (checkout agregado — la acción local lo requiere)
+      - name: Checkout del Repositorio
+        uses: actions/checkout@v4
+
+      - name: Actualizar stage en el Project
+        uses: ./.github/actions/actualizar-stage-project
+        with:
+          issue_number: ${{ inputs.issue_number }}
+          stage_name: "Revisión de Checklist"
+
+      # ⬇️ steps originales
+      - run: echo "Checklist aprobado"
+      - name: Registrar checklist
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number('${{ inputs.issue_number }}'),
+              body: '✅ Checklist aprobado.'
+            })
+
+  stage_aprobacion_seguridad:
+    needs: stage_revision_checklist
+    runs-on: ubuntu-latest
+    environment: Aprobacion-Seguridad
+    steps:
+      # ⬇️ NUEVO (checkout agregado — la acción local lo requiere)
+      - name: Checkout del Repositorio
+        uses: actions/checkout@v4
+
+      - name: Actualizar stage en el Project
+        uses: ./.github/actions/actualizar-stage-project
+        with:
+          issue_number: ${{ inputs.issue_number }}
+          stage_name: "Aprobación de Seguridad"
+
+      # ⬇️ steps originales
+      - run: echo "Seguridad aprobada"
+      - name: Registrar seguridad
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number('${{ inputs.issue_number }}'),
+              body: '✅ Aprobación de Seguridad completada.'
+            })
+
+  stage_planificacion_y_configuracion_dataops:
+    needs: stage_aprobacion_seguridad
+    runs-on: ubuntu-latest
+    environment: Planificacion-Ambiente-DataOps
+    steps:
+      # ⬇️ NUEVO (checkout agregado — la acción local lo requiere)
+      - name: Checkout del Repositorio
+        uses: actions/checkout@v4
+
+      - name: Actualizar stage en el Project
+        uses: ./.github/actions/actualizar-stage-project
+        with:
+          issue_number: ${{ inputs.issue_number }}
+          stage_name: "Planificación DataOps"
+
+      # ⬇️ steps originales
+      - run: echo "Planificacion aprobada"
+      - name: Registrar planificacion
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number('${{ inputs.issue_number }}'),
+              body: '✅ Planificación y configuración DataOps aprobada.'
+            })
+
+  deploy_cert:
+    needs: stage_planificacion_y_configuracion_dataops
+    uses: ./.github/workflows/deploy-cert.yml   # sin 'steps:' propios — no se le puede insertar nada aquí
+    secrets: inherit
+    with:
+      repository: SquadCredicorpData
+      environment: CERT
+
+  # ⬇️ JOB NUEVO — cubre el stage de deploy_cert sin tocar el workflow reusable compartido
+  actualizar_stage_deploy_cert:
+    needs: deploy_cert
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del Repositorio
+        uses: actions/checkout@v4
+
+      - name: Actualizar stage en el Project
+        uses: ./.github/actions/actualizar-stage-project
+        with:
+          issue_number: ${{ inputs.issue_number }}
+          stage_name: "Despliegue en Certificación"
+
+  stage_validacion_funcional_cert:
+    needs: deploy_cert
+    runs-on: ubuntu-latest
+    environment: Validacion-Funcional-Certificacion
+    steps:
+      # ⬇️ NUEVO (checkout agregado — la acción local lo requiere)
+      - name: Checkout del Repositorio
+        uses: actions/checkout@v4
+
+      - name: Actualizar stage en el Project
+        uses: ./.github/actions/actualizar-stage-project
+        with:
+          issue_number: ${{ inputs.issue_number }}
+          stage_name: "Despliegue + Validación Cert"
+
+      # ⬇️ steps originales
+      - run: |
+          echo "Validacion funcional CERT completada"
+          echo "Aprobado para Produccion"
+
+      - name: Registrar validacion CERT
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number('${{ inputs.issue_number }}'),
+              body: '✅ Despliegue y validación funcional CERT completados.'
+            })
+
+  stage_pendiente_reintento:
+    needs:
+      - solicitud_pase
+      - stage_revision_checklist
+      - stage_aprobacion_seguridad
+      - stage_planificacion_y_configuracion_dataops
+      - deploy_cert
+      - stage_validacion_funcional_cert
+    if: always() && contains(needs.*.result, 'failure')
+    runs-on: ubuntu-latest
+    steps:
+      # ⬇️ NUEVO (checkout agregado — la acción local lo requiere)
+      - name: Checkout del Repositorio
+        uses: actions/checkout@v4
+
+      - name: Actualizar stage en el Project
+        uses: ./.github/actions/actualizar-stage-project
+        with:
+          issue_number: ${{ inputs.issue_number }}
+          stage_name: "Pendiente de Reintento"
+
+      # ⬇️ steps originales
+      - name: Marcar ticket rechazado
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number('${{ inputs.issue_number }}'),
+              labels: ['rechazado']
+            });
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number('${{ inputs.issue_number }}'),
+              body: '❌ **Flujo Rechazado en Etapa Pre-Productiva:** El intento fue denegado o falló el despliegue en CERT. Transfiriendo control al Manager para procesar el cierre del ticket.'
+            })
+
+  deploy_prod:
+    needs: stage_validacion_funcional_cert
+    if: needs.stage_validacion_funcional_cert.result == 'success'
+    uses: ./.github/workflows/deploy-prod.yml   # sin 'steps:' propios — no se le puede insertar nada aquí
+    secrets: inherit
+    with:
+      repository: SquadCredicorpData
+      environment: PROD
+
+  # ⬇️ JOB NUEVO — cubre el stage de deploy_prod sin tocar el workflow reusable compartido
+  actualizar_stage_deploy_prod:
+    needs: deploy_prod
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del Repositorio
+        uses: actions/checkout@v4
+
+      - name: Actualizar stage en el Project
+        uses: ./.github/actions/actualizar-stage-project
+        with:
+          issue_number: ${{ inputs.issue_number }}
+          stage_name: "Despliegue en Producción"
+
+  stage_validacion_tecnica_prod:
+    needs: deploy_prod
+    runs-on: ubuntu-latest
+    environment: Validacion-Tecnica-Produccion
+    steps:
+      # ⬇️ NUEVO (checkout agregado — la acción local lo requiere)
+      - name: Checkout del Repositorio
+        uses: actions/checkout@v4
+
+      - name: Actualizar stage en el Project
+        uses: ./.github/actions/actualizar-stage-project
+        with:
+          issue_number: ${{ inputs.issue_number }}
+          stage_name: "Validación Técnica — Producción"
+
+      # ⬇️ steps originales
+      - run: |
+          echo "Validando logs, jobs y pipelines..."
+          echo "Validacion tecnica OK"
+
+      - name: Registrar validacion tecnica
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number('${{ inputs.issue_number }}'),
+              body: '✅ Validación técnica en Producción completada.'
+            })
+
+  stage_validacion_funcional_prod:
+    needs: stage_validacion_tecnica_prod
+    runs-on: ubuntu-latest
+    environment: Validacion-Funcional-Produccion
+    steps:
+      # ⬇️ NUEVO (checkout agregado — la acción local lo requiere)
+      - name: Checkout del Repositorio
+        uses: actions/checkout@v4
+
+      - name: Actualizar stage en el Project
+        uses: ./.github/actions/actualizar-stage-project
+        with:
+          issue_number: ${{ inputs.issue_number }}
+          stage_name: "Validación Funcional — Producción (apoyo)"
+
+      # ⬇️ steps originales
+      - run: |
+          echo "Validacion funcional de negocio OK"
+
+      - name: Registrar validacion funcional
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number('${{ inputs.issue_number }}'),
+              body: '✅ Validación funcional en Producción completada. Pase aprobado.'
+            })
+
+  stage_aprobado:
+    needs: stage_validacion_funcional_prod
+    runs-on: ubuntu-latest
+    steps:
+      # ⬇️ NUEVO (checkout agregado — la acción local lo requiere)
+      - name: Checkout del Repositorio
+        uses: actions/checkout@v4
+
+      - name: Actualizar stage en el Project
+        uses: ./.github/actions/actualizar-stage-project
+        with:
+          issue_number: ${{ inputs.issue_number }}
+          stage_name: "Aprobado"
+
+      # ⬇️ steps originales
+      - name: Marcar ticket aprobado
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number('${{ inputs.issue_number }}'),
+              labels: ['finalizado']
+            });
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number('${{ inputs.issue_number }}'),
+              body: '✅ Pase Regular completado exitosamente. Transfiriendo control al Manager para el cierre formal.'
+            })
+
+  stage_reversion_prod:
+    needs:
+      - deploy_prod
+      - stage_validacion_tecnica_prod
+      - stage_validacion_funcional_prod
+    if: always() && (needs.deploy_prod.result == 'failure' || needs.stage_validacion_tecnica_prod.result == 'failure' || needs.stage_validacion_funcional_prod.result == 'failure')
+    runs-on: ubuntu-latest
+    environment: Reversion-Produccion
+    steps:
+      # ⬇️ NUEVO (checkout agregado — la acción local lo requiere)
+      - name: Checkout del Repositorio
+        uses: actions/checkout@v4
+
+      - name: Actualizar stage en el Project
+        uses: ./.github/actions/actualizar-stage-project
+        with:
+          issue_number: ${{ inputs.issue_number }}
+          stage_name: "Reversión en Producción"
+
+      # ⬇️ steps originales
+      - name: Registrar reversión requerida
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number('${{ inputs.issue_number }}'),
+              labels: ['reversion-requerida']
+            });
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number('${{ inputs.issue_number }}'),
+              body: '🔄 **Alerta de Reversión en Producción:** Se ha detectado un fallo post-despliegue. La Issue permanecerá abierta para la ejecución manual del Rollback.'
+            })
